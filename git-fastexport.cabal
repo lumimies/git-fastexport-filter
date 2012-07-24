@@ -1,6 +1,6 @@
 cabal-version: >= 1.2
 name:                git-fastexport
-version:             0.0
+version:             0.1
 synopsis:            git fastexport stream filter
 description:         Filter for git fastexport
 category:            Development

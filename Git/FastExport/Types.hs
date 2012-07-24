@@ -15,6 +15,16 @@ data Change
                     , chgData  :: Either GitRef GitData
                     , chgMode :: !ByteString
                     }
+        | ChgCopy { chgPath :: !Path
+                  , chgFrom :: !Path
+                  }
+        | ChgRename { chgPath :: !Path
+                    , chgFrom :: !Path
+                    }
+        | ChgDeleteAll
+        | ChgNote { chgData :: Either GitRef GitData
+                  , chgRef  :: GitRef
+                  }
 data Dated a = Dated { datedDate :: !Date, datedValue :: !a }
 data Person = Person { personName :: !ByteString, personEmail :: !ByteString}
 

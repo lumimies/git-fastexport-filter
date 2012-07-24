@@ -41,13 +41,19 @@ instance BlazeShow GitData where
 
 instance Show GitData where
 	show = showme
+
+eitherData f d = either 
+		(\r -> bshow r <> " " <> f <> "\n")
+		(\d -> "inline " <> f <> "\n" <> bshow d) d
 instance BlazeShow Change where
-	bshow (ChgModify path dat mode) =
-		"M " <> bshow mode <> " " <>
-			either (\r -> bshow r <> " " <> bshow path)
-				(\d -> "inline " <> bshow path <> "\n" <> bshow d)
-				dat
-	bshow (ChgDelete path) = "D " <> bshow path
+	bshow c@ChgModify{} =
+		"M " <> bshow (chgMode c) <> " " <>
+			eitherData (bshow (chgPath c)) (chgData c)
+	bshow c@ChgDelete{} = "D " <> bshow (chgPath c)
+	bshow c@ChgCopy{}   = "C " <> bshow (chgFrom c) <> " " <> bshow (chgPath c) <> "\n"
+	bshow c@ChgRename{} = "R " <> bshow (chgFrom c) <> " " <> bshow (chgPath c) <> "\n"
+	bshow ChgDeleteAll  = "deleteall\n"
+	bshow c@ChgNote{}   = "N " <> eitherData (bshow $ chgRef c) (chgData c)
 instance Show Change where
 	show = showme
 instance BlazeShow a => BlazeShow (Dated a) where
