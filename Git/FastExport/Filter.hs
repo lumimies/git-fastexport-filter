@@ -17,7 +17,7 @@ splitBranches paths (GCommit commit@Commit{commitChanges = c}) =
 							\chg -> if p `B.isPrefixOf` chgPath chg then
 							 [chg{chgPath = B.drop (B.length p) (chgPath chg)}]
 							else []
-					in if null newChanges then [] else [GCommit commit{commitBranch = b, commitChanges = newChanges}]
+					in if null newChanges then [] else [GCommit commit{commitHeader=(commitHeader commit){chBranch = b}, commitChanges = newChanges}]
 splitBranches _ GReset{} = []
 splitBranches _ c@GProgress{} = [c]
 

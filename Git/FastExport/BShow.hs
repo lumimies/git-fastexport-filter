@@ -42,19 +42,20 @@ instance BlazeShow GitData where
 instance Show GitData where
 	show = showme
 
-eitherData f d = either 
-		(\r -> bshow r <> " " <> f <> "\n")
-		(\d -> "inline " <> f <> "\n" <> bshow d) d
-instance BlazeShow Change where
+chgHasData ChgModify{} = True
+chgHasData ChgNote{} = True
+chgHasData _ = False
+
+eitherData = either bshow (const "inline") . chgData
+instance BlazeShow (GChange a) where
 	bshow c@ChgModify{} =
-		"M " <> bshow (chgMode c) <> " " <>
-			eitherData (bshow (chgPath c)) (chgData c)
+		"M " <> bshow (chgMode c) <> " " <> eitherData c <> " " <> bshow (chgPath c) <> "\n"
 	bshow c@ChgDelete{} = "D " <> bshow (chgPath c)
 	bshow c@ChgCopy{}   = "C " <> bshow (chgFrom c) <> " " <> bshow (chgPath c) <> "\n"
 	bshow c@ChgRename{} = "R " <> bshow (chgFrom c) <> " " <> bshow (chgPath c) <> "\n"
 	bshow ChgDeleteAll  = "deleteall\n"
-	bshow c@ChgNote{}   = "N " <> eitherData (bshow $ chgRef c) (chgData c)
-instance Show Change where
+	bshow c@ChgNote{}   = "N " <> eitherData c <> " " <> (bshow $ chgRef c) <> "\n"
+instance Show (GChange a) where
 	show = showme
 instance BlazeShow a => BlazeShow (Dated a) where
 	bshow (Dated date v) = bshow v  <> " " <> bshow date
@@ -69,12 +70,47 @@ instance BlazeShow GitCmd where
 	bshow (GReset branch) = "reset " <> bshow branch <> "\n"
 	bshow (GProgress bs) = "progress " <> bshow bs <> "\n"
 instance Show GitCmd where show = showme
+instance BlazeShow CommitHeader where
+	bshow c = bshow (chBranch c) <> "\n"
+				<> maybe "" (\m -> "mark :" <> bshow m <> "\n") (chMark c)
+				<> maybe "" (\a -> "author " <> bshow a <> "\n") (chAuthor c)
+				<> "committer " <> bshow (chCommitter c) <> "\n"
+				<> bshow (chMessage c)
+				<> maybe mempty (\b -> "from " <> bshow b <> "\n") (chFrom c)
+				<> mconcat (map (\r -> "merge " <> bshow r <> "\n") (chMerge c))
 instance BlazeShow Commit where
-	bshow c = bshow (commitBranch c) <> "\n"
-				<> maybe "" (\m -> "mark :" <> bshow m <> "\n") (commitMark c)
-				<> maybe "" (\a -> "author " <> bshow a <> "\n") (commitAuthor c)
-				<> "committer " <> bshow (commitCommitter c) <> "\n"
-				<> bshow (commitMessage c)
-				<> mconcat (map ((<> "\n") . bshow) (commitChanges c))
+	bshow c = bshow (commitHeader c) <> mconcat (map ((<> "\n") . bshow) (commitChanges c))
 instance Show Commit where show = showme
 showme a = C.unpack . BB.toByteString . bshow $ a
+
+instance BlazeShow Reset where
+	bshow (Reset branch from) 
+		= "reset " <> bshow branch <> "\n" 
+		<> maybe mempty (\b -> "from " <> bshow b <> "\n") from
+
+instance BlazeShow InfoCmd where
+	bshow (InfoLs ref path) = "ls " <> maybe (showQuote path) (\r -> bshow r <> bshow path) ref <> "\n"
+	bshow (InfoCatBlob ref) = "cat-blob " <> bshow ref <> "\n"
+bshowPath :: Path -> BB.Builder
+bshowPath p 
+	| "\"" `B.isPrefixOf` p || C.any (== '\n') p 
+		=  showQuote p
+	| otherwise 
+		= bshow p
+
+showQuote p = "\"" <> mconcat (map escChunk $ chunks p)
+	where
+		escChunk c 
+			| B.null c  = mempty
+			| otherwise = esc (C.head c) <> bshow (B.tail c)
+		esc '\n' = "\\n"
+		esc c    | c == '\\' || c == '"' = "\\" <> bshow c
+				 | otherwise = bshow c
+		chunk bs = C.span (\c -> c /= '"' && c /= '\n' && c /= '\\') bs
+		chunks bs 
+			| B.null bs = []
+			| otherwise = let (b,bt) = chunk bs 
+					    in
+						if B.null b then chunks bt else b:chunks bt
+						   
+						  

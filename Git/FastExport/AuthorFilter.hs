@@ -17,8 +17,8 @@ import System.IO
 (<>) = mappend
 
 personRenameFilter :: T.Trie Person -> CmdFilter
-personRenameFilter t (GCommit commit@Commit{commitAuthor=a, commitCommitter=c}) =
-    [GCommit commit{commitAuthor=fmap fixDated a, commitCommitter = fixDated c}]
+personRenameFilter t (GCommit commit@Commit{commitHeader=ch@CommitHeader{chAuthor=a, chCommitter=c}}) =
+    [GCommit commit{commitHeader=ch{chAuthor=fmap fixDated a, chCommitter = fixDated c}}]
     where
         fixDated d@(Dated{datedValue = p}) = d{datedValue = fixPerson p}
         fixPerson :: Person -> Person

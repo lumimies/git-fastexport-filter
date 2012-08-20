@@ -16,7 +16,10 @@ executable git-fastexport-filter
 library
     build-depends:
         base,
+        void,
         attoparsec >= 0.10.2,
+        transformers-base >= 0.4.1,
+        transformers >= 0.2.2 && < 0.4,
         bytestring-trie >= 0.2.3,
         bytestring >= 0.9.1,
         blaze-builder,

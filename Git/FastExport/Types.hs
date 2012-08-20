@@ -9,10 +9,11 @@ newtype GitData = GitData ByteString
 type Path = ByteString
 type Date = ByteString
 type Branch = ByteString
-data Change
+type Change = GChange GitData
+data GChange inlineData
         = ChgDelete { chgPath :: !Path }
         | ChgModify { chgPath :: !Path
-                    , chgData  :: Either GitRef GitData
+                    , chgData  :: Either GitRef inlineData
                     , chgMode :: !ByteString
                     }
         | ChgCopy { chgPath :: !Path
@@ -22,23 +23,46 @@ data Change
                     , chgFrom :: !Path
                     }
         | ChgDeleteAll
-        | ChgNote { chgData :: Either GitRef GitData
+        | ChgNote { chgData :: Either GitRef inlineData
                   , chgRef  :: GitRef
                   }
 data Dated a = Dated { datedDate :: !Date, datedValue :: !a }
 data Person = Person { personName :: !ByteString, personEmail :: !ByteString}
 
+data Reset = Reset Branch (Maybe GitRef)
+
+data GitEvent 
+    = GECommitHeader CommitHeader
+    | GEReset        Reset
+    | GEChange       (GChange ())
+    | GEInfoCmd      InfoCmd
+    | GEComment      ByteString
+    | GEProgress     ByteString
+    | GEDone
+
+data InfoCmd = InfoLs (Maybe GitRef) Path
+             | InfoCatBlob GitRef
+data CommitHeader = CommitHeader 
+    { chBranch    :: Branch
+    , chAuthor    :: Maybe (Dated Person)
+    , chCommitter :: Dated Person
+    , chMessage   :: !GitData
+    , chFrom      :: Maybe GitRef
+    , chMerge     :: [GitRef]
+    , chMark      :: Maybe Mark
+    }
 type Mark = Int
-data Commit = Commit {
-        commitBranch :: !Branch,
-        commitChanges :: [Change],
-        commitAuthor :: Maybe (Dated Person),
-        commitCommitter :: Dated Person,
-        commitMessage :: !GitData,
-        commitFrom :: Maybe GitRef,
-        commitMerge :: [GitRef],
-        commitMark :: Maybe Mark
-}
+data Commit = Commit 
+    { commitHeader :: CommitHeader
+    , commitChanges :: [Change]
+    }
+
+commitAuthor = chAuthor . commitHeader
+commitCommitter = chCommitter . commitHeader
+commitMessage = chMessage . commitHeader
+commitFrom = chFrom . commitHeader
+commitMerge = chMerge . commitHeader
+commitMark = chMark . commitHeader
 
 data GitCmd
         = GCommit Commit

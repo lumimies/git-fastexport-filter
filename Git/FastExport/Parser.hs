@@ -8,36 +8,85 @@ import qualified Data.Attoparsec as AP
 import Data.Attoparsec.Char8 as A
 import Data.Attoparsec.Combinator as A
 import Data.ByteString as B hiding (map,null)
+import qualified Blaze.ByteString.Builder as BB
 import Control.Applicative hiding (optional)
 import Control.Monad (guard)
 import Git.FastExport.Types
 
 optional = option Nothing . fmap Just
 
-parseCmd = (((string "commit " *> fmap (\x -> x `seq` GCommit x) parseCommit) <?> "commit")
+parseCmd = (((fmap (\x -> x `seq` GCommit x) parseCommit) <?> "commit")
 		<|> ((string "reset " *> fmap GReset parseRef ) <?> "reset")
 		<|> ((string "progress " *> fmap GProgress parseLine) <?> "progress")) <* skipMany parseNL
 
-parseCommit :: Parser Commit
-parseCommit = do
+parseGitCmdEvt
+	 =  fmap GECommitHeader parseCommitHeader
+	<|> fmap GEReset        parseReset
+	<|> fmap GEProgress     parseProgress
+	<|> fmap GEComment      parseComment
+	<|> fmap GEInfoCmd      parseInfoCmd
+	<|> return GEDone <*. "done\n"
+
+parseInfoCmd = parseLs <|> parseCatBlob
+	where
+		parseLs = do
+			string "ls "
+			c <- peekChar
+			(path,ref) <-
+				if c == Just '"' then 
+					fmap (\x -> (x,Nothing)) parseQuotedPath
+				 else do
+				 	r <- parseDataRef
+				 	char ' '
+				 	p <- parsePath True
+				 	return (p,Just r)
+			parseNL
+			return $ InfoLs ref path
+		parseCatBlob = do
+			fmap InfoCatBlob $ "cat-blob " .*> parseDataRef
+
+parseReset = do
+	string "reset "
+	ref <- parseRef
+	parseNL
+	from <- optional parseFrom
+	optional parseNL
+	return $ Reset ref from
+
+parseProgress = "progress " .*> parseLine
+
+parseComment = "#" .*> parseLine
+
+parseFrom = fmap GitRef $ "from " .*> parseRef <* parseNL
+
+parseCommitHeader :: Parser CommitHeader
+parseCommitHeader = do
+	string "commit "
 	branch <- parseRef
 	parseNL
 	mark <- optional parseMarkLine
 	author <- optional $ "author " .*> parsePersonLine
 	committer <- "committer " .*> parsePersonLine
 	message <- parseData
-	from <- option Nothing $ string "from " >> parseRef >>= \r -> parseNL >> (return $ Just $ GitRef r)
+	from <- optional parseFrom
 	merges <- flip sepBy parseNL $ "merge " .*> parseRef
-	changes <- sepBy parseChange parseNL
+	return CommitHeader 
+		{ chBranch = branch
+		, chAuthor = author
+		, chCommitter = committer
+		, chMessage = message
+		, chFrom = from
+		, chMerge = map GitRef merges
+		, chMark = mark
+		}
+
+parseCommit :: Parser Commit
+parseCommit = do
+	header <- parseCommitHeader
+	changes <- parseChange parseData `sepBy` parseNL
 	return Commit
-		{ commitBranch = branch
-		, commitChanges = changes
-		, commitAuthor = author
-		, commitCommitter = committer
-		, commitMessage = message
-		, commitFrom = from
-		, commitMerge = map GitRef merges
-		, commitMark = mark
+		{ commitChanges = changes
+		, commitHeader = header
 		}
 
 parsePerson = flip (<?>) "parsePerson" $ do
@@ -73,23 +122,19 @@ parseLine = takeTill (=='\n')
 parseRef = takeTill (=='\n')
 
 parseDataRef :: Parser GitRef
-parseDataRef = fmap GitMark parseMark <|> fmap GitRef (takeTill (==' '))
+parseDataRef = fmap GitMark parseMark <|> fmap GitRef (takeTill (\x -> x ==' ' || x == '\n'))
 
-parsePath isUnQSpaces = A.takeWhile acceptUnquoted <|> parseQuoted
+parseQuotedPath = do
+	char '"'
+	blz <- parseQuotedChunks mempty
+	char '"'
+	return blz
 	where
-		parseQuoted = do
-			char '"'
-			parseQuotedChunks id
-		parseQuotedChunks ls = do
+		parseQuotedChunks builder = do
 			chunk <- A.takeWhile (\c -> c /= '\\' && c /= '"')
-			sep <- anyChar
-			if sep == '\\' then do
-				c <- parseEsc
-				parseQuotedChunks $ ls . (\chunks -> chunk:c:chunks)
-			 else return . B.concat $ ls [chunk]
-		acceptUnquoted
-			| isUnQSpaces = \c -> c /= '\n' && c /= ' '
-			| otherwise   = (/= '\n')
+			let b' = builder <> BB.fromByteString chunk
+			(fmap (\x -> b' <> BB.fromByteString x) parseEsc >>= parseQuotedChunks) 
+			 <|> return (BB.toByteString b')
 		parseEsc = char8 '\\' *> choice (escMap ++ [B.singleton <$> AP.satisfy (AP.inClass "\"\\") ])
 		parseOctalEsc = do
 			d1 <- octalDigit
@@ -110,6 +155,11 @@ parsePath isUnQSpaces = A.takeWhile acceptUnquoted <|> parseQuoted
 			, ('t', "\t")
 			, ('v', "\v")
 			]
+parsePath disallowUnquotedSpace = A.takeWhile acceptUnquoted <|> parseQuotedPath
+	where
+		acceptUnquoted
+			| disallowUnquotedSpace = \c -> c /= '\n' && c /= ' '
+			| otherwise   = (/= '\n')
 
 parseData = do
 	string "data "
@@ -126,7 +176,7 @@ parseData = do
 			A.take len
 		] <* option () parseNL
 	return $ GitData content
-parseChange = do
+parseChange parseInline = do
 	choice 
 		[ parseDelete
 		, parseDeleteAll
@@ -166,7 +216,7 @@ parseChange = do
 			cData <- case ref of
 				Left _ -> do -- inline
 					parseNL
-					d <- parseData
+					d <- parseInline
 					return . Right $ d
 				Right r ->  return . Left $ r
 			return ChgNote
@@ -184,7 +234,7 @@ parseChange = do
 			cData <- case ref of
 				Left _ -> do -- inline
 					parseNL
-					d <- parseData
+					d <- parseInline
 					return . Right $ d
 				Right r ->  return . Left $ r
 			return ChgModify
