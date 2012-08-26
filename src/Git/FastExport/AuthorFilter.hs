@@ -16,14 +16,19 @@ import System.IO
 (<>) :: Monoid a => a -> a -> a
 (<>) = mappend
 
-personRenameFilter :: T.Trie Person -> CmdFilter
-personRenameFilter t (GCommit commit@Commit{commitHeader=ch@CommitHeader{chAuthor=a, chCommitter=c}}) =
-    [GCommit commit{commitHeader=ch{chAuthor=fmap fixDated a, chCommitter = fixDated c}}]
+personRename :: T.Trie Person -> CommitHeader -> CommitHeader
+personRename t ch@CommitHeader{chAuthor=a, chCommitter=c} =
+    ch{chAuthor = fmap fixDated a, chCommitter = fixDated c}
     where
         fixDated d@(Dated{datedValue = p}) = d{datedValue = fixPerson p}
         fixPerson :: Person -> Person
         fixPerson p = maybe p id $ T.lookup (personName p) t <|> T.lookup (personEmail p) t
+personRenameFilter :: T.Trie Person -> CmdFilter
+personRenameFilter t (GCommit commit) =
+    [GCommit commit{commitHeader=personRename t . commitHeader $ commit}]
+
 personRenameFilter _ c = [c]
+
 
 loadPersonRename :: String -> IO CmdFilter
 loadPersonRename s = do

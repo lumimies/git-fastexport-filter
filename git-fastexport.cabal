@@ -10,6 +10,9 @@ author:              Zohar Kelrich
 maintainer:          lumimies@gmail.com
 build-type:          Simple
 
+source-repository head
+    type: git
+
 executable git-fastexport-filter
     main-is:             Git-fastexport-filter.hs
     hs-source-dirs:      src-main
@@ -23,6 +26,7 @@ executable git-fastexport-filter
         git-fastexport
 
 library
+    hs-source-dirs: src
     build-depends:
         base,
         void,

@@ -38,6 +38,7 @@ data GitEvent
     | GEInfoCmd      InfoCmd
     | GEComment      ByteString
     | GEProgress     ByteString
+    | GEData         (Either Int ByteString)
     | GEDone
 
 data InfoCmd = InfoLs (Maybe GitRef) Path

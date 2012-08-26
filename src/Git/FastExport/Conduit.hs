@@ -18,15 +18,19 @@ import Data.Monoid((<>))
 import Data.Maybe
 import Control.Monad.Trans.State
 import Control.Monad.Trans.Class
-
+import qualified Data.Trie as T (Trie)
+import Git.FastExport.AuthorFilter
 filter fltr = L.concatMap fltr
 
 to_bs = L.map bshow =$= CB.builderToByteString
 
 parser = do
-	cmd <- CA.sinkParser P.parseCmd
-	yield cmd
-	parser
+	cmd <- CA.sinkParser (fmap Just P.parseCmd <|> return Nothing) 
+	case cmd of
+		Just c -> do
+			yield c
+			parser
+		Nothing -> return ()
 
 parseCommit :: (MonadThrow m) => GLSink ByteString m Commit
 parseCommit = do
@@ -54,4 +58,20 @@ skipEmptyCommits = transPipe (flip evalStateT Nothing) $ awaitForever
 				_ -> return ()
 			yield c
 		_ -> yield i
-			
+
+personRenameConduit :: Monad m => T.Trie Person -> GInfConduit GitEvent m GitEvent
+personRenameConduit t = awaitForever $ \i -> case i of
+	GECommitHeader ch -> yield . GECommitHeader . personRename t $ ch
+	_                 -> yield i
+
+data SplitterState = SS 
+	{ ssMainBranch :: Maybe Branch
+	, ssExtraBranches :: [(Branch,[GitEvent])]
+	, ssCommitHeader  :: Maybe CommitHeader
+	}
+{-	
+splitByBranches :: Monad m => (Path -> (Path,Branch)) -> GInfConduit GitEvent m GitEvent
+splitByBranches clsfy = transPipe (flip evalState (SS Nothing [] Nothing)) $ awaitForever
+	$ \i -> case i of
+		GECommitHeader ch -> lift . modify $ \s -> s{ssCommitHeader = ch}
+		GEChange c        -> -}

@@ -16,8 +16,8 @@ import Git.FastExport.Types
 optional = option Nothing . fmap Just
 
 parseCmd = (((fmap (\x -> x `seq` GCommit x) parseCommit) <?> "commit")
-		<|> ((string "reset " *> fmap GReset parseRef ) <?> "reset")
-		<|> ((string "progress " *> fmap GProgress parseLine) <?> "progress")) <* skipMany parseNL
+		<|> ((string "reset " *> fmap GReset parseRef <*. "\n") <?> "reset")
+		<|> ((string "progress " *> fmap GProgress parseLine) <?> "progress")) <?> "parseCmd"
 
 parseGitCmdEvt
 	 =  fmap GECommitHeader parseCommitHeader
