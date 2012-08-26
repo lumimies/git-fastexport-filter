@@ -1,4 +1,4 @@
-cabal-version: >= 1.2
+cabal-version: >= 1.8
 name:                git-fastexport
 version:             0.1
 synopsis:            git fastexport stream filter
@@ -12,6 +12,13 @@ build-type:          Simple
 
 executable git-fastexport-filter
     main-is:             Git-fastexport-filter.hs
+    hs-source-dirs:      src-main
+    build-depends:
+        base,
+        bytestring >= 0.9.1,
+        bytestring-trie >= 0.2.3,
+        conduit >= 0.5,
+        git-fastexport
 
 library
     build-depends:
@@ -34,3 +41,5 @@ library
         Git.FastExport.AuthorFilter,
         Git.FastExport.Types,
         Git.FastExport.Conduit
+    other-modules:
+        Git.FastExport.Parser
