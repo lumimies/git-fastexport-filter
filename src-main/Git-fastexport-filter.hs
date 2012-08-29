@@ -11,7 +11,6 @@ import Data.Conduit.Binary
 import System.IO (stdin, stdout)
 import System.Exit
 import System.Environment (getArgs, getProgName)
-import qualified Data.Trie as T
 import Data.Maybe (listToMaybe)
 import Control.Monad (guard)
 import Control.Applicative

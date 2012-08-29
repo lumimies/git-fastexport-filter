@@ -18,7 +18,6 @@ import Data.Monoid((<>))
 import Data.Maybe
 import Control.Monad.Trans.State
 import Control.Monad.Trans.Class
-import qualified Data.Trie as T (Trie)
 import Git.FastExport.AuthorFilter
 filter fltr = L.concatMap fltr
 
@@ -59,7 +58,7 @@ skipEmptyCommits = transPipe (flip evalStateT Nothing) $ awaitForever
 			yield c
 		_ -> yield i
 
-personRenameConduit :: Monad m => T.Trie Person -> GInfConduit GitEvent m GitEvent
+personRenameConduit :: Monad m => AuthorDB -> GInfConduit GitEvent m GitEvent
 personRenameConduit t = awaitForever $ \i -> case i of
 	GECommitHeader ch -> yield . GECommitHeader . personRename t $ ch
 	_                 -> yield i

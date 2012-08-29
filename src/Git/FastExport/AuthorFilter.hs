@@ -1,5 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Git.FastExport.AuthorFilter where
+module Git.FastExport.AuthorFilter 
+    ( AuthorDB
+    , personRename
+    , personRenameFilter
+    , loadPersonFile
+    , loadPersonRename
+    )
+    where
 
 import Control.Applicative
 import Data.Monoid
@@ -13,17 +20,15 @@ import qualified Git.FastExport.Parser as P
 import qualified Data.Trie as T
 import System.IO
 
-(<>) :: Monoid a => a -> a -> a
-(<>) = mappend
-
-personRename :: T.Trie Person -> CommitHeader -> CommitHeader
-personRename t ch@CommitHeader{chAuthor=a, chCommitter=c} =
+newtype AuthorDB = DB (T.Trie Person)
+personRename :: AuthorDB -> CommitHeader -> CommitHeader
+personRename (DB t) ch@CommitHeader{chAuthor=a, chCommitter=c} =
     ch{chAuthor = fmap fixDated a, chCommitter = fixDated c}
     where
         fixDated d@(Dated{datedValue = p}) = d{datedValue = fixPerson p}
         fixPerson :: Person -> Person
         fixPerson p = maybe p id $ T.lookup (personName p) t <|> T.lookup (personEmail p) t
-personRenameFilter :: T.Trie Person -> CmdFilter
+personRenameFilter :: AuthorDB -> CmdFilter
 personRenameFilter t (GCommit commit) =
     [GCommit commit{commitHeader=personRename t . commitHeader $ commit}]
 
@@ -35,7 +40,7 @@ loadPersonRename s = do
     t <- loadPersonFile s
     return $ personRenameFilter t
 
-loadPersonFile :: String -> IO (T.Trie Person)
+loadPersonFile :: String -> IO AuthorDB
 loadPersonFile s = do
     withFile s ReadMode $ \ f -> do
         let loop ls = do
@@ -46,10 +51,10 @@ loadPersonFile s = do
                     Done _ res -> loop (res:ls)
                     Fail t ctx err -> do
                         --putStrLn $ "Skipped: "++ C.unpack l ++ "(" ++ err ++ ": " ++ C.unpack t ++ ")"
-                        loop ls -- $ err ++ " (line: " ++ C.unpack l ++ ")"
+                        loop ls -- - $ err ++ " (line: " ++ C.unpack l ++ ")"
                     Partial p -> loop ls
         ls <- loop []
-        return $ T.fromList ls
+        return . DB $ T.fromList ls
 skipHSpace = skipWhile $ inClass " \t"
 parseComment = do
     skipHSpace
