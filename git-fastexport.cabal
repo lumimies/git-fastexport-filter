@@ -36,6 +36,7 @@ library
         bytestring >= 0.9.1,
         blaze-builder,
         conduit >= 0.5,
+        containers,
         attoparsec-conduit,
         blaze-builder-conduit,
         blaze-textual
