@@ -3,6 +3,7 @@
 module Git.FastExport.Conduit where
 
 import Data.Conduit
+import Data.Conduit.Internal
 import qualified Data.Conduit.List as L
 import qualified Data.Conduit.Attoparsec as CA
 import qualified Data.Conduit.Blaze as CB
@@ -12,7 +13,7 @@ import qualified Data.Map as M
 import Data.ByteString (ByteString)
 import Control.Monad.Base
 import Control.Applicative
-import Data.Attoparsec as A
+import Data.Attoparsec as A hiding (Done)
 import Git.FastExport.BShow
 import Git.FastExport.Types
 import Data.Void
@@ -109,7 +110,55 @@ splitStuff classify flushAfterP allowStreamThroughP = transPipe (flip evalStateT
 				Just k' | k == k' -> 
 					transPipe lift src
 				Nothing           -> 
-					lift . modify $ \s -> s{sssOtherBuckets = M.insertWith (>>) k src (sssOtherBuckets s)}				
+					lift . modify $ \s -> s{sssOtherBuckets = M.insertWith (>>) k src (sssOtherBuckets s)}
+
+eitherConduit :: Monad m => Pipe Void i o u m x -> Pipe Void i' o x m y -> Pipe Void (Either i i') o u m y
+eitherConduit x y = mapOutput (either id id) $ firstConduit x >+> secondConduit y
+
+firstConduit :: Monad m => Pipe l i o u m x -> Pipe l (Either i c) (Either o c) u m x
+firstConduit = go
+	where
+		go (Leftover p l)       = Leftover (go p) l
+		go x@(NeedInput p c)    = NeedInput (either (go . p) (HaveOutput (go x) (return ()) . Right)) (go . c)
+		go (HaveOutput p c o)   = HaveOutput (go p) c (Left o)
+		go (PipeM m)            = PipeM (m >>= (return . go))
+		go (Done r)             = Done r
+
+secondConduit :: Monad m => Pipe l i o u m x -> Pipe l (Either c i) (Either c o) u m x
+secondConduit = go
+	where
+		go (Leftover p l)       = Leftover (go p) l
+		go x@(NeedInput p c)    = NeedInput (either (HaveOutput (go x) (return ()) . Left) (go . p)) (go . c)
+		go (HaveOutput p c o)   = HaveOutput (go p) c (Right o)
+		go (PipeM m)            = PipeM (m >>= (return . go))
+		go (Done r)             = Done r
+
+gatherWithPassthrough :: (Monad m, Ord k) => (k -> Bool) -> GConduit (Flush (k,a)) m a
+gatherWithPassthrough canPass = loop Nothing >+> eitherConduit gatherStuff unFlushify
+	where
+		unFlushify = awaitForever $ \i -> case i of
+			Chunk (k,a) -> yield a
+			Flush       -> return ()
+		mark k k'
+			| k == k'   = Right
+			| otherwise = Left
+		go s c@Flush = do
+			yield $ Left c
+			loop Nothing
+		go s c@(Chunk (k, a)) = do
+			let (f,s') = maybe (if canPass k then (Right, Just k) else (Left,s)) (\k' -> (mark k k', s)) s
+			yield $ f c
+			loop s'
+		loop s = awaitE >>= either return (go s)
+
+gatherStuff :: (Monad m, Ord k) => GConduit (Flush (k,a)) m a
+gatherStuff = go M.empty
+	where
+		go bs = do
+			awaitE >>= either (const $ flush bs) (handle bs)
+		handle bs Flush = flush bs >> go M.empty
+		handle bs (Chunk (k,a)) = go $ M.insertWith (++) k [a] bs
+		flush bs = mapM_ yield . concat . M.elems $ bs
 
 {-splitByBranches :: (MonadThrow m) => (GChange () -> [(Branch,[GitEvent])]) -> GInfConduit GitEvent m GitEvent
 splitByBranches clsfy = transPipe (flip evalStateT Nothing) $
