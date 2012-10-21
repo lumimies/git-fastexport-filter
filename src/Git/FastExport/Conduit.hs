@@ -67,51 +67,6 @@ personRenameConduit t = awaitForever $ \i -> case i of
 	GECommitHeader ch -> yield . GECommitHeader . personRename t $ ch
 	_                 -> yield i
 
-data SplitterState = SS 
-	{ ssMainBranch :: Maybe Branch
-	, ssExtraBranches :: [(Branch,[GitEvent])]
-	, ssCommitHeader  :: Maybe CommitHeader
-	}
-data StuffSplitterState k v = SSS
-	{ sssCurrentBucket :: Maybe k
-	, sssOtherBuckets :: M.Map k v
-	}
-
--- | Map one input into many sets of outputs, grouped by key, and then emit sets
--- by key order. Allows immediately streaming the first of some subset of keys
--- instead of collecting it.
-splitStuff :: (Monad m, Ord k) => 
-	(a -> [(k,GSource m b)]) -- ^ Map input to sources for certain buckets
-	-> (a -> m Bool)         -- ^ Whether to flush all buckets after this
-	-> (k -> m Bool)         -- ^ Whether this bucket may be streamed through
-	-> GInfConduit a m b
-splitStuff classify flushAfterP allowStreamThroughP = transPipe (flip evalStateT (SSS Nothing M.empty)) $ awaitForever
-	$ \i -> do
-		let kvs = classify i
-		unless (null kvs) $ do
-			lift . modify
-				$ \s -> s{sssCurrentBucket = Just $ fromMaybe (fst . head $ kvs) $ sssCurrentBucket s }
-			Just curr <- lift . gets $ sssCurrentBucket
-			mapM_ yieldStuff kvs
-		flush <- lift . lift $ flushAfterP i
-		when flush $ do
-			srcs <- lift . gets $ M.elems . sssOtherBuckets
-			lift . put $ SSS Nothing M.empty
-			transPipe lift $ sequence_ srcs
-	where
-		yieldStuff (k,src :: GSource m b) = do
-			haveCurrent <- lift . gets $ isJust . sssCurrentBucket
-			unless haveCurrent $ do
-				allowFlush <- lift . lift $ allowStreamThroughP k
-				when allowFlush $
-					lift . modify $ \s ->s{sssCurrentBucket = Just k}
-			curr <- lift . gets $ sssCurrentBucket
-			case curr of
-				Just k' | k == k' -> 
-					transPipe lift src
-				Nothing           -> 
-					lift . modify $ \s -> s{sssOtherBuckets = M.insertWith (>>) k src (sssOtherBuckets s)}
-
 eitherConduit :: Monad m => Pipe Void i o u m x -> Pipe Void i' o x m y -> Pipe Void (Either i i') o u m y
 eitherConduit x y = mapOutput (either id id) $ firstConduit x >+> secondConduit y
 
@@ -151,24 +106,89 @@ gatherWithPassthrough canPass = loop Nothing >+> eitherConduit gatherStuff unFlu
 			loop s'
 		loop s = awaitE >>= either return (go s)
 
+gatherWithPassthrough' :: (Monad m, Ord k) => (k -> Bool) -> GConduit (Flush (k,a)) m a
+gatherWithPassthrough' canPass = stateConduit_ Nothing go (\_ -> return ()) >+> eitherConduit gatherStuff unFlushify
+	where
+		unFlushify = awaitForever $ \i -> case i of
+			Chunk (k,a) -> yield a
+			Flush       -> return ()
+		go c@Flush = do
+			yield $ Left c
+			lift $ put Nothing
+		go c@(Chunk (k, a)) = do
+			x <- lift $ gets isNothing
+			when (x && canPass k) $ lift $ put (Just k)
+			s <- lift get
+			case s of
+				Just k' 
+					| k == k' -> yield $ Right c
+				_             -> yield $ Left c
+
+stateConduit' :: (Monad m) => s -> (i -> Pipe l i o u (StateT s m) u) -> Pipe l i o u m u
+stateConduit' s p = stateConduit s go
+	where go = awaitE >>= either (return . Just) (\i -> p i >> return Nothing)
+
+stateConduit_ :: (Monad m) => s -> 
+	(i -> Pipe l i o u (StateT s m) ()) -> 
+	(u -> Pipe l i o u (StateT s m) r) -> 
+	Pipe l i o u m r
+stateConduit_ s p e = stateConduit s go
+	where go = awaitE >>= either ((>>= (return . Just)) . e) ((>> return Nothing) . p)
+stateConduit :: (Monad m) => s -> Pipe l i o u (StateT s m) (Maybe r) -> Pipe l i o u m r
+stateConduit s p = loop s
+	where loop s = do
+		(x,s') <- transPipe (flip evalStateT s) (p >>= lift . gets . (,))
+		case x of
+			Just r -> return r
+			Nothing -> loop s'
+
+gatherStuff' :: (Monad m, Ord k) => GInfConduit (Flush (k,a)) m a
+gatherStuff' = stateConduit_ M.empty handle ((flush >>) . return)
+	where
+		flush = do
+			lift get >>= L.sourceList . concat . M.elems
+			lift $ put M.empty
+		handle Flush = flush
+		handle (Chunk (k,a)) = lift . modify $ M.insertWith (++) k [a]
+
 gatherStuff :: (Monad m, Ord k) => GConduit (Flush (k,a)) m a
 gatherStuff = go M.empty
 	where
-		go bs = do
-			awaitE >>= either (const $ flush bs) (handle bs)
+		go bs = awaitE >>= either (const $ flush bs) (handle bs)
 		handle bs Flush = flush bs >> go M.empty
 		handle bs (Chunk (k,a)) = go $ M.insertWith (++) k [a] bs
-		flush bs = mapM_ yield . concat . M.elems $ bs
+		flush = L.sourceList . concat . M.elems
 
-{-splitByBranches :: (MonadThrow m) => (GChange () -> [(Branch,[GitEvent])]) -> GInfConduit GitEvent m GitEvent
-splitByBranches clsfy = transPipe (flip evalStateT Nothing) $
-		splitStuff classifyEvent isCommitEnded
+splitByBranches :: (MonadThrow m) => (GChange () -> [(Branch,[GitEvent])]) -> GConduit GitEvent m GitEvent
+splitByBranches clsfy = go Nothing M.empty >+> gatherWithPassthrough (const True)
 	where
-		classifyEvent (GECommitHeader ch) = lift . put $ Just (ch,[])
-		classifyEvent (GEChange c)        = do
+		go curr knownBranches = awaitE >>= either return (classifyEvent curr knownBranches)
+		classifyEvent curr knownBranches (GECommitHeader ch) = do
+			yield Flush
+			go (Just ch) M.empty
+		classifyEvent curr@(Just ch) knownBranches (GEChange c) = do
 			let bs = clsfy c
-			s <- get
-			case s of
-				Nothing -> 
-			(Just (ch,bs'), emitEvents )
--}
+			flip mapM_ bs $ \(b,es) -> do
+				let header = if b `M.member` knownBranches then [] else  [GECommitHeader ch{chBranch = b}]
+				L.sourceList . map (\x -> Chunk (b,x)) $ header ++ es
+			go curr (foldr (\(x,_) -> M.insert x True) knownBranches bs)
+--splitBranchesConduit :: (Monad m) => [(Path, Branch)] -> GConduit GitEvent m GitEvent
+--splitBranchesConduit bs = splitByBranches convert
+--	where
+--		convert 
+dropPathsConduit :: (Monad m) => (Path -> Bool) -> GInfConduit GitEvent m GitEvent
+dropPathsConduit p = awaitForever go
+	where
+		go e@(GEChange c) = case c of
+			ChgDeleteAll -> yield e
+			-- TODO: If we're filtering the 'from' it might not be there.
+			-- There's no easy fix for this, because there's no blob to use instead.
+			ChgCopy{} -> unless (p $ chgPath c) $ yield e 
+			ChgRename{} -> case (p (chgPath c), p (chgFrom c)) of
+				(True,True) -> return ()
+				(True,False) -> yield (GEChange (ChgDelete $ chgFrom c))
+				-- Convert rename to copy, to kinda fulfill not touching the filtered path
+				(False,True) -> yield (GEChange (ChgCopy{chgFrom = chgFrom c, chgPath = chgPath c})) 
+				(False,False) -> yield e
+			ChgNote{}   -> yield e
+			_ -> unless (p $ chgPath c) $ yield e
