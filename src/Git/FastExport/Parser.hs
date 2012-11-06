@@ -20,11 +20,12 @@ parseCmd = (((fmap (\x -> x `seq` GCommit x) parseCommit) <?> "commit")
 		<|> ((string "progress " *> fmap GProgress parseLine) <?> "progress")) <?> "parseCmd"
 
 parseGitCmdEvt
-	 =  fmap GECommitHeader parseCommitHeader
-	<|> fmap GEReset        parseReset
-	<|> fmap GEProgress     parseProgress
-	<|> fmap GEComment      parseComment
-	<|> fmap GEInfoCmd      parseInfoCmd
+	 =  fmap GECommitHeader (parseCommitHeader <?> "commitHeader")
+	<|> fmap GEReset        (parseReset        <?> "reset")
+	<|> fmap GEProgress     (parseProgress     <?> "progress")
+	<|> fmap GEComment      (parseComment      <?> "comment")
+	<|> fmap GEInfoCmd      (parseInfoCmd      <?> "infoCmd")
+	<|> (parseFeature <?> "feature")
 	<|> return GEDone <*. "done\n"
 
 parseInfoCmd = parseLs <|> parseCatBlob
@@ -53,9 +54,15 @@ parseReset = do
 	optional parseNL
 	return $ Reset ref from
 
-parseProgress = "progress " .*> parseLine
+parseFeature = do
+	string "feature "
+	f <- takeTill (\x -> x == '\n' || x == '=')
+	arg <- optional ("=" .*> parseLine)
+	parseNL
+	return $ GEFeature f arg
+parseProgress = "progress " .*> parseLine <* parseNL
 
-parseComment = "#" .*> parseLine
+parseComment = "#" .*> parseLine <* parseNL
 
 parseFrom = fmap GitRef $ "from " .*> parseRef <* parseNL
 
@@ -176,15 +183,14 @@ parseData = do
 			A.take len
 		] <* option () parseNL
 	return $ GitData content
-parseChange parseInline = do
-	choice 
-		[ parseDelete
-		, parseDeleteAll
-		, parseModify
-		, parseCopy
-		, parseRename
-		, parseNote
-		]
+parseChange parseInline = choice 
+		[ parseDelete    <?> "parseDelete"
+		, parseDeleteAll <?> "parseDeleteAll"
+		, parseModify    <?> "parseModify"
+		, parseCopy      <?> "parseCopy"
+		, parseRename    <?> "parseRename"
+		, parseNote      <?> "parseNote"
+		] <?> "parseChange"
 	where
 		parseDeleteAll = string "deleteall" *> return ChgDeleteAll
 		parseDelete = do

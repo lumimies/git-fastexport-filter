@@ -50,7 +50,7 @@ eitherData = either bshow (const "inline") . chgData
 instance BlazeShow (GChange a) where
 	bshow c@ChgModify{} =
 		"M " <> bshow (chgMode c) <> " " <> eitherData c <> " " <> bshow (chgPath c) <> "\n"
-	bshow c@ChgDelete{} = "D " <> bshow (chgPath c)
+	bshow c@ChgDelete{} = "D " <> bshow (chgPath c) <> "\n"
 	bshow c@ChgCopy{}   = "C " <> bshow (chgFrom c) <> " " <> bshow (chgPath c) <> "\n"
 	bshow c@ChgRename{} = "R " <> bshow (chgFrom c) <> " " <> bshow (chgPath c) <> "\n"
 	bshow ChgDeleteAll  = "deleteall\n"
@@ -79,7 +79,7 @@ instance BlazeShow CommitHeader where
 				<> maybe mempty (\b -> "from " <> bshow b <> "\n") (chFrom c)
 				<> mconcat (map (\r -> "merge " <> bshow r <> "\n") (chMerge c))
 instance BlazeShow Commit where
-	bshow c = bshow (commitHeader c) <> mconcat (map ((<> "\n") . bshow) (commitChanges c))
+	bshow c = bshow (commitHeader c) <> mconcat (map bshow (commitChanges c))
 instance Show Commit where show = showme
 showme a = C.unpack . BB.toByteString . bshow $ a
 
@@ -91,6 +91,15 @@ instance BlazeShow Reset where
 instance BlazeShow InfoCmd where
 	bshow (InfoLs ref path) = "ls " <> maybe (showQuote path) (\r -> bshow r <> bshow path) ref <> "\n"
 	bshow (InfoCatBlob ref) = "cat-blob " <> bshow ref <> "\n"
+
+instance BlazeShow GitEvent where
+	bshow (GECommitHeader ch) = "commit " <> bshow ch
+	bshow (GEReset r) = bshow r
+	bshow (GEInfoCmd i) = bshow i
+	bshow (GEComment c) = "#" <> bshow c <> "\n"
+	bshow (GEChange c)  = bshow c
+	bshow (GEProgress p) = "progress " <> bshow p <> "\n"
+	bshow GEDone         = "done\n"
 bshowPath :: Path -> BB.Builder
 bshowPath p 
 	| "\"" `B.isPrefixOf` p || C.any (== '\n') p 

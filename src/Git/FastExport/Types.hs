@@ -38,7 +38,10 @@ data GitEvent
     | GEInfoCmd      InfoCmd
     | GEComment      ByteString
     | GEProgress     ByteString
+    | GEBlobHeader   (Maybe Mark)
     | GEData         (Either Int ByteString)
+    | GEDataChunk    ByteString
+    | GEFeature      ByteString (Maybe ByteString)
     | GEDone
 
 data InfoCmd = InfoLs (Maybe GitRef) Path

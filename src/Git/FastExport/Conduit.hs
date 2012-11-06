@@ -35,6 +35,24 @@ parser = do
 			parser
 		Nothing -> return ()
 
+parseEvents :: (MonadThrow m) => GLConduit ByteString m GitEvent
+parseEvents = do 
+	e <- CA.sinkParser $ fmap Just P.parseGitCmdEvt <|> (return Nothing)
+	case e of
+		Nothing -> return ()
+		Just e'@GEDone -> yield e'
+		Just e'@GECommitHeader{} -> do
+			yield e'
+			parseChanges
+			parseEvents
+		Just e'      -> yield e' >> parseEvents
+	where
+		parseChanges = do
+			c <- CA.sinkParser $ fmap Just (P.parseChange (return ()) >>= \x -> P.parseNL>> return x) <|> (P.optional P.parseNL >> return Nothing)
+			case c of
+				Just c' -> yield (GEChange c') >> parseChanges
+				Nothing -> return ()
+
 parseCommit :: (MonadThrow m) => GLSink ByteString m Commit
 parseCommit = do
 	h <- CA.sinkParser P.parseCommitHeader
@@ -127,6 +145,13 @@ gatherWithPassthrough' canPass = stateConduit_ Nothing go (\_ -> return ()) >+> 
 stateConduit' :: (Monad m) => s -> (i -> Pipe l i o u (StateT s m) u) -> Pipe l i o u m u
 stateConduit' s p = stateConduit s go
 	where go = awaitE >>= either (return . Just) (\i -> p i >> return Nothing)
+
+stateConduit'' :: (Monad m) => s -> 
+	(i -> Pipe l i o u (StateT s m) (Maybe r)) -> 
+	(u -> Pipe l i o u (StateT s m) r) -> 
+	Pipe l i o u m r
+stateConduit'' s p e = stateConduit s go
+	where go = awaitE >>= either ((>>= (return . Just)) . e) p
 
 stateConduit_ :: (Monad m) => s -> 
 	(i -> Pipe l i o u (StateT s m) ()) -> 

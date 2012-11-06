@@ -38,9 +38,11 @@ doStuff src sink authorsPath droppedPaths = do
 				] b >>= dropPaths droppedPaths >>= authorFilter
 	runResourceT $ src $= FE.parser $= FE.filter fltr $= FE.to_bs $$ sink
 
+passthru src sink = runResourceT $ src $= FE.parseEvents $= FE.to_bs $$ sink
 usage prog = prog ++ " [<input file> [<output file>]]\n\n" ++
 			 "\tFilter git fast-export stream from input to output. '-' means stdin/stdout\n"
-main = run (doStuff <$> src <*> sink <*> authorPath <*> droppedPaths, termInfo)
+main = run $ (passthru <$> src <*> sink, termInfo)
+		--(doStuff <$> src <*> sink <*> authorPath <*> droppedPaths, termInfo)
 	where
 		termInfo = defTI
 			{ termName = "git-fastexport-filter"
@@ -50,11 +52,11 @@ main = run (doStuff <$> src <*> sink <*> authorPath <*> droppedPaths, termInfo)
 		droppedPaths = fmap unPL . value $
 			opt (PathList []) (optInfo ["d","drop-paths"]){
 				optDoc = "Paths to drop, separated by " ++ [searchPathSeparator]}
-		src = fmap (sourceHandle stdin ||| sourceFile) . fileExists $ value $
-			pos 1 "-" posInfo{ posName = "IN", posDoc = "Path to input file. - for stdin." }
+		src = fmap (sourceHandle stdin ||| sourceFile) $ value $
+			pos 0 "-" posInfo{ posName = "IN", posDoc = "Path to input file. - for stdin." }
 		sink = fmap (sinkHandle stdout ||| sinkFile) . value $
-			pos 2 "-" posInfo{ posName = "OUT", posDoc = "Path to output file. - for stdout" }
+			pos 1 "-" posInfo{ posName = "OUT", posDoc = "Path to output file. - for stdout" }
 		(def ||| f) s = case s of
 			"-" -> def
 			_   -> f s
-		authorPath = value $ opt Nothing (optInfo ["a","authors"]){ optDoc = "Path to authors file" }
+		-- authorPath = value $ opt Nothing (optInfo ["a","authors"]){ optDoc = "Path to authors file" }
